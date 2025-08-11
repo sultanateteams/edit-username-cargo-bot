@@ -74,8 +74,10 @@ const showDropdown = ref(false);
 const searchInput = ref(null);
 const options = ref([]);
 
-const org_id = "f67f4a71-9a10-43ae-ad9f-91d7dfa565a1";
-const onlyNullID = false;
+const queryParams = new URLSearchParams(window.location.search);
+const org_id = queryParams.get("org_id") || null;
+const onlyNullID = queryParams.get("onlyNullID") || false;
+
 const Telegram = window.Telegram?.WebApp;
 
 onMounted(async () => {
@@ -85,23 +87,26 @@ onMounted(async () => {
   }
 
   loading.value = true;
-  let query = supabase
-    .from("users")
-    .select("*")
-    .eq("state", 1)
-    .or(`org_id.eq.${org_id},orgs_id.cs.{${org_id}}`);
+  if (org_id) {
+    let query = supabase
+      .from("users")
+      .select("*")
+      .eq("state", 1)
+      .or(`org_id.eq.${org_id},orgs_id.cs.{${org_id}}`);
 
-  if (onlyNullID) query = query.is("user_id", null);
+    if (onlyNullID) query = query.is("user_id", null);
 
-  const { data, error } = await query;
+    const { data, error } = await query;
 
-  if (error) {
-    errorText.value =
-      "Supabase xato: " + (error.message || JSON.stringify(error));
+    if (error) {
+      errorText.value =
+        "Supabase xato: " + (error.message || JSON.stringify(error));
+    } else {
+      options.value = data || [];
+    }
   } else {
-    options.value = data || [];
+    errorText.value = "Organization ID not found";
   }
-
   loading.value = false;
 
   await nextTick();
