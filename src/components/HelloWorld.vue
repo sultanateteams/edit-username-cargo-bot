@@ -140,15 +140,23 @@ const filteredOptions = computed(() => {
   const term = search.value.trim().toLowerCase();
   if (!term) return options.value;
 
-  return options.value.filter((opt) =>
-    [opt.first_name, opt.last_name, opt.user_id]
-      .filter(Boolean)
-      .some((field) => String(field).toLowerCase().includes(term))
-  );
+  return options.value.filter((opt) => {
+    // Asosiy maydonlarni yig'amiz
+    const fields = [
+      opt.first_name,
+      opt.last_name,
+      opt.user_id,
+      ...(opt.cargo_list?.map((c) => c.cargo_id) || []), // cargo_id larni qo‘shamiz
+    ].filter(Boolean); // null/undefined ni olib tashlaymiz
+
+    // Shu maydonlarning bittasi bo‘lsa ham qidiruv so‘zini o‘z ichiga oladimi?
+    return fields.some((field) => String(field).toLowerCase().includes(term));
+  });
 });
 
 // User tanlash
 const selectOption = (opt) => {
+  console.log(JSON.stringify(opt));
   selectedUser.value = opt;
   search.value = `${opt.first_name} ${opt.last_name}`;
   showDropdown.value = false;
