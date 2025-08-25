@@ -15,7 +15,7 @@
     </div>
 
     <!-- Forma -->
-    <b-form @submit.prevent="onSubmit" v-else>
+    <b-form v-else @submit.prevent="onSubmit">
       <!-- Qidirish input -->
       <b-form-input
         ref="searchInput"
@@ -33,7 +33,7 @@
       >
         <b-list-group-item
           v-for="opt in filteredOptions"
-          :key="opt.id"
+          :key="opt.user_id"
           action
           @click="selectOption(opt)"
         >
@@ -41,22 +41,26 @@
         </b-list-group-item>
       </b-list-group>
 
-      <!-- Qo'shimcha input -->
-      <b-form-input
-        v-model="extraText"
-        placeholder="Qo'shimcha ma'lumot kiriting"
-        class="mt-3"
-      ></b-form-input>
+      <!-- Cargo list inputlari -->
+      <div v-if="selectedUser" class="mt-4">
+        <h5>Cargo ma'lumotlari</h5>
 
-      <!-- Tugma faqat shart bajarilganda -->
-      <b-button
-        v-if="selected && extraText.trim()"
-        type="submit"
-        variant="primary"
-        class="mt-3"
-      >
-        Yuborish
-      </b-button>
+        <div
+          v-for="transport in transportTypes"
+          :key="transport"
+          class="mb-3 p-2 border rounded"
+        >
+          <label class="form-label fw-bold">{{
+            transport.toUpperCase()
+          }}</label>
+
+          <b-form-input
+            v-model="cargoInputs[transport].cargo_id"
+            :placeholder="`${transport} cargo_id`"
+            class="mb-2"
+          ></b-form-input>
+        </div>
+      </div>
     </b-form>
   </div>
 </template>
@@ -68,8 +72,7 @@ import supabase from "../config/supabazaClient";
 const errorText = ref("");
 const loading = ref(false);
 const search = ref("");
-const selected = ref(null);
-const extraText = ref("");
+const selectedUser = ref(null);
 const showDropdown = ref(false);
 const searchInput = ref(null);
 const options = ref([]);
@@ -80,6 +83,22 @@ const onlyNullID = queryParams.get("onlyNullID") || false;
 
 const Telegram = window.Telegram?.WebApp;
 
+const transportTypes = ["auto", "air", "rail", "sea"];
+const cargoInputs = ref({});
+
+// Cargo inputlarni tayyorlab beradigan funksiya
+const initCargoInputs = (cargo_list) => {
+  const init = {};
+  transportTypes.forEach((t) => {
+    const found = cargo_list?.find((c) => c.transport_type === t);
+    init[t] = {
+      cargo_id: found ? found.cargo_id : "",
+      transport_type: t,
+    };
+  });
+  cargoInputs.value = init;
+};
+
 onMounted(async () => {
   if (Telegram) {
     Telegram.ready();
@@ -88,25 +107,27 @@ onMounted(async () => {
 
   loading.value = true;
   if (org_id) {
-    let query = supabase
-      .from("users")
-      .select("*")
-      .eq("state", 1)
-      .or(`org_id.eq.${org_id},orgs_id.cs.{${org_id}}`);
+    const { data: rpcData, error: rpcError } = await supabase.rpc(
+      "get_users_with_cargos_by_org",
+      {
+        p_org_id: org_id,
+      }
+    );
 
-    if (onlyNullID) query = query.is("user_id", null);
-
-    const { data, error } = await query;
-
-    if (error) {
+    if (rpcError) {
       errorText.value =
-        "Supabase xato: " + (error.message || JSON.stringify(error));
+        "Supabase RPC xato: " + (rpcError.message || JSON.stringify(rpcError));
     } else {
-      options.value = data || [];
+      let result = rpcData || [];
+      if (onlyNullID) {
+        result = result.filter((row) => row.user_id === null);
+      }
+      options.value = result;
     }
   } else {
     errorText.value = "Organization ID not found";
   }
+
   loading.value = false;
 
   await nextTick();
@@ -114,39 +135,56 @@ onMounted(async () => {
   showDropdown.value = true;
 });
 
+// Foydalanuvchilarni filtrlash
 const filteredOptions = computed(() => {
   const term = search.value.trim().toLowerCase();
   if (!term) return options.value;
 
   return options.value.filter((opt) =>
-    [
-      opt.first_name,
-      opt.last_name,
-      opt.user_id,
-      opt.telegram_number,
-      opt.telegram_id,
-      opt.phone_number,
-    ]
-      .filter((field) => field !== null && field !== undefined)
+    [opt.first_name, opt.last_name, opt.user_id]
+      .filter(Boolean)
       .some((field) => String(field).toLowerCase().includes(term))
   );
 });
 
+// User tanlash
 const selectOption = (opt) => {
-  selected.value = opt.id;
+  selectedUser.value = opt;
   search.value = `${opt.first_name} ${opt.last_name}`;
   showDropdown.value = false;
+
+  initCargoInputs(opt.cargo_list || []);
 };
 
+// Auto cargo_id ni kuzatib Telegram MainButtonni boshqarish
+watch(
+  () => cargoInputs.value.auto?.cargo_id,
+  (newVal) => {
+    if (newVal && newVal.trim().length) {
+      if (Telegram?.MainButton) {
+        Telegram.MainButton.text = "Saqlash";
+        Telegram.MainButton.show();
+      }
+    } else {
+      Telegram?.MainButton?.hide();
+    }
+  }
+);
+
+// Submit tugmasi (forma ichida)
 const onSubmit = () => {
-  console.log("Tanlangan ID:", selected.value);
-  console.log("Qo'shimcha matn:", extraText.value);
+  console.log("Tanlangan user:", selectedUser.value);
+  console.log("Cargo inputs:", cargoInputs.value);
 };
 
+// Telegram MainButton bosilganda chaqiriladigan funksiya
 const handleMainButtonClick = () => {
   const queryId = Telegram.initDataUnsafe?.query_id;
+
   const payload = JSON.stringify({
-    changeUserID: { userId: selected.value, newUser_id: extraText.value },
+    user: selectedUser.value,
+    cargos: cargoInputs.value,
+    org_id,
     queryId,
   });
 
@@ -160,15 +198,4 @@ const handleMainButtonClick = () => {
     Telegram.sendData(payload);
   }
 };
-
-watch([selected, extraText], ([sel, extra]) => {
-  if (sel && extra.trim().length) {
-    if (Telegram?.MainButton) {
-      Telegram.MainButton.text = "Register";
-      Telegram.MainButton.show();
-    }
-  } else {
-    Telegram?.MainButton?.hide();
-  }
-});
 </script>
