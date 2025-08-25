@@ -182,9 +182,11 @@ const handleMainButtonClick = () => {
   const queryId = Telegram.initDataUnsafe?.query_id;
 
   const payload = JSON.stringify({
-    user: selectedUser.value,
-    cargos: cargoInputs.value,
-    org_id,
+    add_user_cargo_ids: {
+      user: selectedUser.value,
+      cargos: cargoInputs.value,
+      org_id,
+    },
     queryId,
   });
 
