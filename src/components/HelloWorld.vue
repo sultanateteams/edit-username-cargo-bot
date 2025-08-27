@@ -16,6 +16,13 @@
 
     <!-- Forma -->
     <b-form v-else @submit.prevent="onSubmit">
+      <!-- Checkbox: Faqat ID si yo‘q -->
+      <b-form-checkbox v-model="onlyNullID" class="mb-3">
+  <span :style="{ textDecoration: !onlyNullID ? 'line-through' : 'none' }">
+    ID berilmagan mijozlar
+  </span>
+</b-form-checkbox>
+
       <!-- Qidirish input -->
       <b-form-input
         ref="searchInput"
@@ -33,7 +40,7 @@
       >
         <b-list-group-item
           v-for="opt in filteredOptions"
-          :key="opt.user_id"
+          :key="opt.user_id || opt.tempId"
           action
           @click="selectOption(opt)"
         >
@@ -76,10 +83,10 @@ const selectedUser = ref(null);
 const showDropdown = ref(false);
 const searchInput = ref(null);
 const options = ref([]);
+const onlyNullID = ref(true);
 
 const queryParams = new URLSearchParams(window.location.search);
 const org_id = queryParams.get("org_id") || null;
-const onlyNullID = queryParams.get("onlyNullID") || false;
 
 const Telegram = window.Telegram?.WebApp;
 
@@ -99,68 +106,89 @@ const initCargoInputs = (cargo_list) => {
   cargoInputs.value = init;
 };
 
-onMounted(async () => {
-  if (Telegram) {
-    Telegram.ready();
-    Telegram.onEvent("mainButtonClicked", handleMainButtonClick);
-  }
-
+// RPC dan foydalanuvchilarni olish va filtr
+const fetchUsers = async () => {
   loading.value = true;
-  if (org_id) {
+  try {
+    if (!org_id) {
+      errorText.value = "Organization ID not found";
+      return;
+    }
+
     const { data: rpcData, error: rpcError } = await supabase.rpc(
       "get_users_with_cargos_by_org",
-      {
-        p_org_id: org_id,
-      }
+      { p_org_id: org_id }
     );
 
     if (rpcError) {
       errorText.value =
         "Supabase RPC xato: " + (rpcError.message || JSON.stringify(rpcError));
-    } else {
-      let result = rpcData || [];
-      if (onlyNullID) {
-        result = result.filter((row) => row.user_id === null);
-      }
-      options.value = result;
+      return;
     }
-  } else {
-    errorText.value = "Organization ID not found";
+
+    let result = rpcData || [];
+
+    // 🔹 Default filtr: faqat ID yo‘q yoki cargo_id falsy
+    if (onlyNullID.value) {
+      result = result.filter((row) => {
+        const cargoList = row.cargo_list || [];
+        const hasValidCargo = cargoList.some((c) => c.cargo_id);
+        return row.user_id === null || !hasValidCargo;
+      });
+    }
+
+    // Temporary ID larni qo‘shamiz agar user_id null bo‘lsa
+    result = result.map((row, idx) => ({
+      ...row,
+      tempId: row.user_id ? null : `temp-${idx}`,
+    }));
+
+    options.value = result;
+  } catch (err) {
+    errorText.value = "Foydalanuvchilarni olishda xatolik";
+    console.error(err);
+  } finally {
+    loading.value = false;
+    await nextTick();
+    searchInput.value?.focus();
+    showDropdown.value = true;
   }
+};
 
-  loading.value = false;
-
-  await nextTick();
-  searchInput.value?.focus();
-  showDropdown.value = true;
+onMounted(() => {
+  if (Telegram) {
+    Telegram.ready();
+    Telegram.onEvent("mainButtonClicked", handleMainButtonClick);
+  }
+  fetchUsers();
 });
 
-// Foydalanuvchilarni filtrlash
+// Foydalanuvchilarni filtrlash qidiruv bilan
 const filteredOptions = computed(() => {
   const term = search.value.trim().toLowerCase();
   if (!term) return options.value;
 
   return options.value.filter((opt) => {
-    // Asosiy maydonlarni yig'amiz
     const fields = [
       opt.first_name,
       opt.last_name,
       opt.user_id,
-      ...(opt.cargo_list?.map((c) => c.cargo_id) || []), // cargo_id larni qo‘shamiz
-    ].filter(Boolean); // null/undefined ni olib tashlaymiz
-
-    // Shu maydonlarning bittasi bo‘lsa ham qidiruv so‘zini o‘z ichiga oladimi?
-    return fields.some((field) => String(field).toLowerCase().includes(term));
+      ...(opt.cargo_list?.map((c) => c.cargo_id) || []),
+    ].filter(Boolean);
+    return fields.some((f) => String(f).toLowerCase().includes(term));
   });
+});
+
+// Checkbox o‘zgarganda qayta fetch qilish
+watch(onlyNullID, () => {
+  fetchUsers();
 });
 
 // User tanlash
 const selectOption = (opt) => {
-  console.log(JSON.stringify(opt));
   selectedUser.value = opt;
   search.value = `${opt.first_name} ${opt.last_name}`;
   showDropdown.value = false;
-
   initCargoInputs(opt.cargo_list || []);
 };
 
